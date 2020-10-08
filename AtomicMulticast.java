@@ -12,7 +12,7 @@ public class AtomicMulticast {
 			return;
 		}
 
-		byte[] mensagem = null;
+		String mensagem = null;
 
 		int porta = Integer.parseInt(args[1]);		
 		MulticastSocket socket = new MulticastSocket(porta);
@@ -20,6 +20,8 @@ public class AtomicMulticast {
 		socket.joinGroup(grupo);
 		String nick = args[2];
 		
+		boolean voting = false;
+
 		Scanner scanner = new Scanner(System.in);
 		long last_time = 0;
 		
@@ -34,11 +36,21 @@ public class AtomicMulticast {
 				String vars[] = recebido.split("\\s");
 
 				try {
+
+					// Verifica se a mensagem é antiga
 					if (vars[0].equals(Long.toString(last_time))) {
-						System.out.println("old: " + recebido);
-					} else if (vars[2].equals("VOTE_REQUEST")) {
+						if (!vars[1].equals(nick)){
+							System.out.println("old: " + recebido);
+						}
+					}
+					// Caso a mensagem seja um VOTE_REQUEST, aguarda para o usuário fazer a votação. 
+					// Flag voting para dizer que como recebeu um VOTE_REQUEST, a mesma esta fazendo a ação de votar. 
+					else if (vars[2].equals("VOTE_REQUEST") && !vars[1].equals(nick)) {
 						System.out.println("VOTE_REQUEST");
-					} else if (vars[2].equals("VOTE_ABORT")) {
+						voting = true;
+					} 
+					// Caso a mensagem seja um VOTE_ABORT, envia um GLOBAL_ABORT a todo grupo. Apenas um abort basta para tal ação.
+					else if (vars[2].equals("VOTE_ABORT")) {
 						mensagem = null;
 						long time = System.currentTimeMillis();
 						byte[] saida = new byte[1024];
@@ -47,9 +59,16 @@ public class AtomicMulticast {
 						DatagramPacket abort = new DatagramPacket(saida, saida.length, grupo, porta);
 						socket.send(abort);
 
-					}else if (vars[2].equals("VOTE_COMMIT")) {
+					}
+					// Caso a mensagem seja um VOTE_ABORT, envia um GLOBAL_COMMIT a todo grupo. Apenas um commit basta para tal ação.
+					// O grupo gostaria de fazer com que todo o multicast group tivesse que votar, porém não conseguimos determinar o tamanho
+					// e assim, não sabemos quantos votos aguardar.
+					else if (vars[2].equals("VOTE_COMMIT")) {
 							if (mensagem != null) {
-								DatagramPacket mensagemPack = new DatagramPacket(mensagem, mensagem.length, grupo, porta);
+								String commit = "\tGLOBAL_COMMIT";
+								mensagem += commit;
+								byte[] saidaMensagem = mensagem.getBytes();
+								DatagramPacket mensagemPack = new DatagramPacket(saidaMensagem, saidaMensagem.length, grupo, porta);
 								socket.send(mensagemPack);
 								mensagem = null;
 							}
@@ -77,9 +96,21 @@ public class AtomicMulticast {
 				String mens = scanner.nextLine();
 				long time = System.currentTimeMillis();
 				byte[] saida = new byte[1024];
-				saida = (Long.toString(time) + " " + nick + " " + mens).getBytes();
+				String msgOut = (Long.toString(time) + " " + nick + " " + mens);
+				saida = msgOut.getBytes();
+
+				// Veririca se o usuario está votando e as opções digitadas não são as válidas.
+				if (voting && (!mens.equals("VOTE_COMMIT") && !mens.equals("VOTE_ABORT"))) {
+					System.out.println("OPCAO INVALIDA. Digite VOTE_COMMIT ou VOTE_ABORT");
+					continue;
+				}
+
+				voting = false;
+
+				// Verifica se o usuario nao esta votando e nao utilizou nenhuma das opcoes. 
+				// Entao, o mesmo esta digitando a primeira mensagem, e assim a guardamos.
 				if (!mens.equals("VOTE_COMMIT") && !mens.equals("VOTE_ABORT")) {
-					mensagem = saida;
+					mensagem = msgOut;
 					byte[] msgVote = new byte[1024];
 					msgVote = (Long.toString(time) + " " + nick + " " + "VOTE_REQUEST").getBytes();
 					DatagramPacket votePacote = new DatagramPacket(msgVote, msgVote.length, grupo, porta);
